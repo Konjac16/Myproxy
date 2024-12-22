@@ -1,6 +1,6 @@
 use tokio::net::{TcpListener, TcpStream};
 use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
-// use crate::socks5::handle_socks5;
+use Mycore::mycore::{Cipher, Password, SecureSocket};
 
 pub async fn local_proxy() -> io::Result<()> {
     let addr = "127.0.0.1:1080";
@@ -22,11 +22,14 @@ pub async fn local_proxy() -> io::Result<()> {
 async fn handle_connection(mut socket: TcpStream) -> io::Result<()> {
     // 连接到远程服务器
     let remote_addr = "127.0.0.1:9090";
-    let mut remote = TcpStream::connect(remote_addr).await?;
+    let remote = TcpStream::connect(remote_addr).await?;
+    let password = Password::new();
+    let cipher = Cipher::new(password);
+    let mut secure_socket = SecureSocket::new(remote, cipher);
 
     // 转发数据
     let (mut ri, mut wi) = socket.split();
-    let (mut ro, mut wo) = remote.split();
+    let (mut ro, mut wo) = tokio::io::split(secure_socket);
 
     tokio::try_join!(
         async {
@@ -43,7 +46,7 @@ async fn handle_connection(mut socket: TcpStream) -> io::Result<()> {
                 eprintln!("Error forwarding data from remote to client: {}", e);
             }
             if let Err(e) = wi.shutdown().await {
-                eprintln!("Error shutting down write half of remote: {}", e);
+                eprintln!("Error shutting down write half of client: {}", e);
             }
             Ok::<(), io::Error>(())
         },
