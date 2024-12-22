@@ -3,7 +3,7 @@ use tokio::net::{TcpListener, TcpStream};
 use Mycore::mycore::{Cipher, Password, SecureSocket};
 
 pub async fn remote_proxy() -> io::Result<()> {
-    let addr = "198.13.55.17:1080";
+    let addr = "0.0.0.0:9090";
     let listener = TcpListener::bind(addr).await?;
     println!("Remote proxy server running at {}", addr);
 
@@ -27,21 +27,18 @@ pub async fn remote_proxy() -> io::Result<()> {
 async fn handle_socks5(mut socket: SecureSocket) -> io::Result<()> {
     let mut buf = [0; 4096];
 
-    // 读取客户端的握手请求并解密
+    // 握手
     let n = socket.read(&mut buf).await?;
     if n == 0 {
         return Ok(());
     }
-
-    // 解析握手请求
-    // SOCKS5 握手请求格式: VER, NMETHODS, METHODS
+    // VER, NMETHODS, METHODS
     if buf[0] != 0x05 {
         let error_msg = "Invalid SOCKS version";
         socket.write_all(error_msg.as_bytes()).await?;
         return Err(io::Error::new(io::ErrorKind::InvalidData, error_msg));
     }
 
-    // 发送握手响应
     socket.write_all(&[0x05, 0x00]).await?;
 
     // 读取客户端的连接请求并解密
@@ -50,8 +47,7 @@ async fn handle_socks5(mut socket: SecureSocket) -> io::Result<()> {
         return Ok(());
     }
 
-    // 解析连接请求
-    // SOCKS5 连接请求格式: VER, CMD, RSV, ATYP, DST.ADDR, DST.PORT
+    // VER, CMD, RSV, ATYP, DST.ADDR, DST.PORT
     if buf[0] != 0x05 {
         let error_msg = "Invalid SOCKS version in connect request";
         socket.write_all(error_msg.as_bytes()).await?;
@@ -65,7 +61,7 @@ async fn handle_socks5(mut socket: SecureSocket) -> io::Result<()> {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, error_msg));
     }
 
-    // 解析目标地址和端口
+    // 解地址，端口
     let atyp = buf[3];
     let (dst_addr, dst_port) = match atyp {
         0x01 => { // IPv4
@@ -105,15 +101,12 @@ async fn handle_socks5(mut socket: SecureSocket) -> io::Result<()> {
     // 建立到目标服务器的连接
     match TcpStream::connect(format!("{}:{}", dst_addr, dst_port)).await {
         Ok(mut target_stream) => {
-            // 发送连接成功响应
             let response = [0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0];
             socket.write_all(&response).await?;
 
-            // 分离源和目标流
             let (mut src_read, mut src_write) = io::split(socket);
             let (mut tgt_read, mut tgt_write) = target_stream.split();
 
-            // 使用 tokio::join 同时转发数据
             let (res1, res2) = tokio::join!(
                 transfer(&mut src_read, &mut tgt_write),
                 transfer(&mut tgt_read, &mut src_write),
