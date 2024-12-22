@@ -3,7 +3,7 @@ use tokio::net::{TcpListener, TcpStream};
 use Mycore::mycore::{Cipher, Password, SecureSocket};
 
 pub async fn remote_proxy() -> io::Result<()> {
-    let addr = "127.0.0.1:9090";
+    let addr = "198.13.55.17:1080";
     let listener = TcpListener::bind(addr).await?;
     println!("Remote proxy server running at {}", addr);
 

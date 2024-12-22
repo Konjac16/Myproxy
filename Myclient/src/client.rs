@@ -21,7 +21,7 @@ pub async fn local_proxy() -> io::Result<()> {
 
 async fn handle_connection(mut socket: TcpStream) -> io::Result<()> {
     // 连接到远程服务器
-    let remote_addr = "127.0.0.1:9090";
+    let remote_addr = "198.13.55.17:1080";
     let remote = TcpStream::connect(remote_addr).await?;
     let password = Password::new();
     let cipher = Cipher::new(password);
