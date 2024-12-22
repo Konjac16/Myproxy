@@ -1,7 +1,9 @@
+use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::net::TcpStream;
+use tokio::net::tcp::{ReadHalf, WriteHalf};
 use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::StdRng};
-use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
-use tokio::net::tcp::{ReadHalf, WriteHalf};
+use futures::task::{Context, Poll};
 
 pub const PASSWORD_LENGTH: usize = 256;
 pub const RNG_SEED: [u8; 32] = [0; 32]; 
@@ -53,11 +55,12 @@ impl Cipher {
 
 pub struct SecureSocket {
     cipher: Cipher,
+    socket: TcpStream,
 }
 
 impl SecureSocket {
-    pub fn new(cipher: Cipher) -> Self {
-        SecureSocket { cipher }
+    pub fn new(socket: TcpStream, cipher: Cipher) -> Self {
+        SecureSocket { cipher, socket }
     }
 
     pub async fn encode_copy<'a>(
@@ -93,5 +96,51 @@ impl SecureSocket {
         }
         Ok(())
     }
-    
+}
+
+impl AsyncRead for SecureSocket {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<tokio::io::Result<()>> {
+        let mut inner_buf = [0u8; 1024];
+        let mut read_buf = ReadBuf::new(&mut inner_buf);
+        let this = self.get_mut();
+        let n = futures::ready!(tokio::io::AsyncRead::poll_read(
+            std::pin::Pin::new(&mut this.socket),
+            cx,
+            &mut read_buf
+        ))?;
+        let filled = read_buf.filled().len();
+        this.cipher.decode(&mut inner_buf[..filled]);
+        buf.put_slice(&inner_buf[..filled]);
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl AsyncWrite for SecureSocket {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<tokio::io::Result<usize>> {
+        let mut inner_buf = buf.to_vec();
+        self.cipher.encode(&mut inner_buf);
+        tokio::io::AsyncWrite::poll_write(std::pin::Pin::new(&mut self.get_mut().socket), cx, &inner_buf)
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<tokio::io::Result<()>> {
+        tokio::io::AsyncWrite::poll_flush(std::pin::Pin::new(&mut self.get_mut().socket), cx)
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<tokio::io::Result<()>> {
+        tokio::io::AsyncWrite::poll_shutdown(std::pin::Pin::new(&mut self.get_mut().socket), cx)
+    }
 }
